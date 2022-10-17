@@ -3,25 +3,84 @@
 %% 1. Helpful lecture: https://www.youtube.com/watch?v=JWskjzgiIa4
 %% 2. NIST standard: https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf
 %%    (btw: the double bar notation means "concatenate")
+%% 3. https://en.wikipedia.org/wiki/SHA-3
 %% @end
 -module(kek).
 
 % theta and rho steps are done
-% weird syntax errors
 
 -compile(export_all).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TOP LEVEL API
+%%%
+%%% sha*s and shake*s
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-spec sha3_224(Message) -> Digest
+    when Message :: bitstring(),
+         Digest  :: <<_:224>>.
+%% @doc
+%% SHA-3 with an output bit length of 224 bits.
+%% @end
 
 sha3_224(Message) ->
     sha3(224, Message).
 
+
+
+-spec sha3_256(Message) -> Digest
+    when Message :: bitstring(),
+         Digest  :: <<_:256>>.
+%% @doc
+%% SHA-3 with an output bit length of 256 bits.
+%% @end
+
 sha3_256(Message) ->
     sha3(256, Message).
+
+
+
+-spec sha3_384(Message) -> Digest
+    when Message :: bitstring(),
+         Digest  :: <<_:384>>.
+%% @doc
+%% SHA-3 with an output bit length of 384 bits.
+%% @end
 
 sha3_384(Message) ->
     sha3(384, Message).
 
+
+
+-spec sha3_512(Message) -> Digest
+    when Message :: bitstring(),
+         Digest  :: <<_:512>>.
+%% @doc
+%% SHA-3 with an output bit length of 512 bits.
+%% @end
+
 sha3_512(Message) ->
     sha3(512, Message).
+
+
+
+-spec sha3(OutputBitLength, Message) -> Digest
+    when OutputBitLength :: pos_integer(),
+         Message         :: bitstring(),
+         Digest          :: <<_:OutputBitLength>>.
+%% @doc
+%% SHA-3 with an arbitrary output bit length.
+%%
+%% This means Keccak with Capacity = 2*OutputBitLength. Additionally, SHA3
+%% concatenates the bits 01 onto the end of the input, before sending the
+%% Message to keccak/3.
+%% @end
 
 sha3(OutputBitLength, Message) ->
     Capacity = 2*OutputBitLength,
@@ -29,11 +88,44 @@ sha3(OutputBitLength, Message) ->
     keccak(Capacity, ShaMessage, OutputBitLength).
 
 
+
+-spec shake128(Message, OutputBitLength) -> Digest
+    when Message         :: bitstring(),
+         OutputBitLength :: pos_integer(),
+         Digest          :: <<_:OutputBitLength>>.
+%% @doc
+%% This is the SHAKE variable-length hash with Capacity 256 = 2*128 bits.
+%% @end
+
 shake128(Message, OutputBitLength) ->
     shake(128, Message, OutputBitLength).
 
+
+
+-spec shake256(Message, OutputBitLength) -> Digest
+    when Message         :: bitstring(),
+         OutputBitLength :: pos_integer(),
+         Digest          :: <<_:OutputBitLength>>.
+%% @doc
+%% This is the SHAKE variable-length hash with Capacity 512 = 2*256 bits.
+%% @end
+
 shake256(Message, OutputBitLength) ->
     shake(256, Message, OutputBitLength).
+
+
+
+-spec shake256(ShakeNumber, Message, OutputBitLength) -> Digest
+    when ShakeNumber     :: pos_integer(),
+         Message         :: bitstring(),
+         OutputBitLength :: pos_integer(),
+         Digest          :: <<_:OutputBitLength>>.
+%% @doc
+%% This is the SHAKE variable-length hash with Capacity 512 = 2*ShakeNumber bits.
+%%
+%% This concatenates the bitstring 1111 onto the end of the Message before
+%% sending the message to keccak/3.
+%% @end
 
 shake(ShakeNumber, Message, OutputBitLength) ->
     Capacity = 2*ShakeNumber,
@@ -42,11 +134,28 @@ shake(ShakeNumber, Message, OutputBitLength) ->
 
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% OUTER KECCAK
+%%%
+%%% Keccak pads the input, absorbs it into the sponge, and squeezes the bits out
+%%% of the sponge.  The absorption and squeezing phases invoke "inner keccak",
+%%% which is the heart of the algorithm.
+%%%
+%%% - keccak/3
+%%% - pad/2
+%%% - absorb/4
+%%% - squeeze/3
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -spec keccak(Capacity, Message, OutputBitLength) -> Digest
     when Capacity        :: pos_integer(),
          Message         :: bitstring(),
          OutputBitLength :: pos_integer(),
-         Digest          :: bitstring().
+         Digest          :: <<_:OutputBitLength>>.
 %% @doc
 %% Note: this is Keccak 1600, the only one used in practice
 %%
@@ -190,6 +299,26 @@ really_squeeze(WetSponge, OutputBitLength, BitRate, ResultAcc)->
 
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% THE DREADED INNER KECCAK
+%%%
+%%% This is the "f" function that appears in all the documentation.
+%%%
+%%% The input is the 1600-bit sponge array. inner_keccak/1 sends the input
+%%% through 24 "rounds". Each round consists of the 5 Greek letter steps, each of
+%%% which is a weird transformation on the array.
+%%%
+%%% In "inner keccak", the input array is thought of as a 5x5x64 3D array. The
+%%% coordinate system is described in its own section.
+%%%
+%%% TODO: iota depends on the round index, so this code may need to be altered
+%%% slightly.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -spec inner_keccak(Sponge) -> NewSponge
     when Sponge    :: <<_:1600>>,
          NewSponge :: <<_:1600>>.
@@ -230,6 +359,21 @@ rnd(Sponge) ->
     iota(chi(pi(rho(theta(Sponge))))).
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% THETA STEP
+%%
+%% For each bit in the input array,
+%% 1. take
+%%    - the bit
+%%    - the 5-bit column to the left
+%%    - the 5-bit column to the front right
+%% 2. compute the parity of their concatenation (0 if even# of 1s, 1 if odd# of
+%%    1s)
+%% 3. set the bit to that parity value
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec theta(Array) -> NewArray
     when Array    :: <<_:1600>>,
@@ -276,6 +420,33 @@ theta(ArrayBits, ThisIdx0) ->
     theta(NewBits, NewIdx0).
 
 
+
+-spec parity(Bits) -> Parity
+    when Bits   :: bitstring(),
+         Parity :: 0 | 1.
+%% @private
+%% Count the number of 1s in the given bitstring. Return 0 if even, 1 if odd.
+%% @end
+
+parity(Bits) ->
+    parity(Bits, 0).
+
+parity(<<0:1, Rest/bitstring>>, NOnes) -> parity(Rest, NOnes);
+parity(<<1:1, Rest/bitstring>>, NOnes) -> parity(Rest, NOnes + 1);
+parity(<<>>                   , NOnes) -> NOnes rem 2.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% RHO STEP
+%%
+%% This step applies an affine shift to each 64-bit "lane" (fixed X,Y; Z ranges
+%% from 0 to 63).
+%%
+%% The amount of the shift is given by the "offset" table.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec rho(Array) -> NewArray
     when    Array :: <<_:1600>>,
@@ -337,35 +508,6 @@ rhoxy(Array, ThisXY = {xy, ThisX, ThisY}) ->
     NewArray = replace_lane(Array, ThisXY, NewLane),
     NewArray.
 
-xyth(_, _) -> error(nyi).
-
--spec replace_lane(OriginalArray, LaneXY, NewLane) -> NewArray
-    when OriginalArray :: <<_:1600>>,
-         LaneXY        :: {xy, 0..4, 0..4},
-         NewLane       :: <<_:64>>,
-         NewArray      :: <<_:1600>>.
-%% @private
-%% take the original array, and swap out the lane at the given x,y coordinate
-%% with the new given lane. the lane will be represented continuously so we
-%% can do a hack
-%% @end
-
-% special case when it's the last lane
-% grab the final 64 bits off the original array and replace them with the new lane
-replace_lane(<<Pre:(1600 - 64), _:64>>, _LaneXY = {xy, 4, 4}, NewLane) ->
-    <<Pre:(1600 - 64), NewLane/bitstring>>;
-% general case, grab the shit before the lane, grab the shit after the lane
-% replace the shit in the middle
-replace_lane(OriginalArray, _LaneXY = {xy, LaneX, LaneY}, NewLane) ->
-    FirstBitOfLane_Idx0    = xyz_to_idx0({xyz, LaneX, LaneY, 0}),
-    FirstBitAfterLane_Idx0 = xyz_to_idx0({xyz, LaneX, LaneY, 63}) + 1,
-    NumberOfBitsBeforeTheLane    = FirstBitOfLane_Idx0,
-    NumberOfBitsIncludingTheLane = FirstBitAfterLane_Idx0,
-    <<PreLane:NumberOfBitsBeforeTheLane   ,         _/bitstring>> = OriginalArray,
-    <<      _:NumberOfBitsIncludingTheLane, AfterLane/bitstring>> = OriginalArray,
-    Result = <<PreLane:NumberOfBitsBeforeTheLane, NewLane/bitstring, AfterLane/bitstring>>,
-    Result.
-
 
 
 -spec offset(X, Y) -> Offset
@@ -409,16 +551,111 @@ offset(2, 3) ->  15 rem 64.
 
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% PI STEP
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 pi(_Sponge) ->
     error(nyi).
 
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% CHI STEP
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 chi(_Sponge) ->
     error(nyi).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% IOTA STEP
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 iota(_Sponge) ->
     error(nyi).
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% INNER KECCAK COORDINATE SYSTEM
+%%%
+%%% Inner Keccak thinks of the 1600-bit input array as a 5x5x64 3D array
+%%% (5*5*64).  This section provides a variety of helper functions to talk about
+%%% the array using the X,Y,Z coordinate system.
+%%%
+%%% The coordinate system is toroidal, meaning that each coordinate is "modded
+%%% down" to be in the approprate range.  For instance, the X-coordinate "to the
+%%% right" of X=4 is X=0. And likewise, the coordinate "behind" Z=63 is Z=0. See
+%%% the section on directionality conventions.
+%%%
+%%% VOCABULARY:
+%%%
+%%% 3D state:
+%%% - The [state] is the entire 5x5x24 array
+%%%
+%%% 0D subsets of the state:
+%%% - A [bit] is a single bit in the array given by an X,Y,Z coordinate triple
+%%%   (see xyzth/3).
+%%% 
+%%% 1D subsets of the state:
+%%% - a [row]
+%%%   - is a 5-bit array
+%%%   - given by a Y,Z coordinate pair in range {0..4, 0..63} (see yzth/2)
+%%%   - you should think of a row as being internally indexed with an X
+%%%     coordinate ranging in 0..4
+%%% - a [column]
+%%%   - is a 5-bit array
+%%%   - given by an X,Z coordinate pair in range {0..4, 0..63} (see xzth/2)
+%%%   - you should think of a column as being internally indexed with a Y
+%%%     coordinate ranging in 0..4
+%%% - a [lane]
+%%%   - is a 64-bit array
+%%%   - given by an X,Y coordinate pair in range {0..4, 0..4} (see xyth/2)
+%%%   - you should think of a lane as being internally indexed with a Z
+%%%     coordinate ranging in 0..63.
+%%%
+%%% 2D subsets of the state:
+%%% - a [sheet]
+%%%   - is a 5x64 array
+%%%   - given by a single X coordinate ranging in 0..4 (see xth/2)
+%%%   - you should think of a sheet as being internally indexed by a Y,Z
+%%%     coordinate pair ranging in {0..4, 0..63}.
+%%% - a [plane]
+%%%   - is a 5x64 array
+%%%   - given by a single Y coordinate ranging in 0..4 (see yth/2)
+%%%   - you should think of a plane as being internally indexed by a X,Z
+%%%     coordinate pair ranging in {0..4, 0..63}.
+%%% - a [slice]
+%%%   - is a 5x5 array
+%%%   - given by a single Z coordinate ranging in 0..63 (see zth/2)
+%%%   - you should think of a sheet as being internally indexed by a X,Y
+%%%     coordinate pair ranging in {0..4, 0..4}.
+%%%
+%%% PACKING CONVENTION:
+%%%
+%%% Each lane (64-bit long bitstring given by an {X,Y} <- {0..4, 0..4} coordinate
+%%% pair and indexed by a Z <- 0..63 coordinate.
+%%%
+%%% DIRECTIONALITY CONVENTION:
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% CONVERTING BETWEEN XYZ-INDICES AND 0-INDICES
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec idx0_to_xyz(Idx0) -> XYZ
     when Idx0 :: 0..1599,
@@ -458,6 +695,13 @@ xyz_to_idx0({xyz, X, Y, Z}) ->
     Y*64*5 + X*64 + Z.
 
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% DIRECTIONAL TRANSFORMATIONS ON SINGLE COORDINATE VALUES
+%%
+%% For instance, if you have an X-value and want to get the X-value "to the
+%% left", this section contains functions that compute such things.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec left(X) -> XToTheLeft
     when X          :: 0..4,
@@ -549,12 +793,57 @@ behind(63)                     -> 0.
 
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 0D BIT ACCESSORS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-spec xyzth(XYZ, Array1600) -> Bit
+    when XYZ  :: {xyz, X, Y, Z},
+         Bits :: <<_:1600>>,
+         Bit  :: 0 | 1,
+         X    :: 0..4,
+         Y    :: 0..4,
+         Z    :: 0..63.
+%% @private
+%% Fetch the bit at the given X, Y, Z coordinate triple
+%% @end
+
+xyzth(_XYZ, _Array1600) ->
+    error(nyi).
+    %Idx0 = xyz_to_idx0(XYZ),
+    %<<_Skip:Idx0.
+
+
+
+-spec xyzset(XYZ, Array1600, Bit) -> NewArray1600
+    when XYZ  :: {xyz, X, Y, Z},
+         Bits :: <<_:1600>>,
+         Bit  :: 0 | 1,
+         X    :: 0..4,
+         Y    :: 0..4,
+         Z    :: 0..63.
+%% @private
+%% Set the bit at the given X, Y, Z coordinate triple to the given value
+%% @end
+
+xyzset(_XYZ, _Array1600, _NewBit) ->
+    error(nyi).
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 1D SUBSET ACCESSORS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -spec xzth(XZ, Bits) -> Column
     when XZ     :: {xz, X, Z},
          X      :: 0..4,
          Z      :: 0..63,
          Bits   :: <<_:1600>>,
          Column :: <<_:5>>.
+%% @private
+%% Fetch the column at the given X, Z coordinate pair
+%% @end
 
 xzth({xz, X, Z}, Bits) ->
     % just grab them one at a time
@@ -562,18 +851,49 @@ xzth({xz, X, Z}, Bits) ->
     || Y <- lists:seq(0, 4)
     >>.
 
-xyzth(_, _) -> error(nyi).
 
 
--spec parity(bitstring()) -> 0 | 1.
-
+-spec xyth(XY, Array1600) -> Lane
+    when XY        :: {xy, X, Y},
+         Array1600 :: <<_:1600>>,
+         Lane      :: <<_:64>>,
+         X         :: 0..4,
+         Y         :: 0..4.
 %% @private
-%% count the number of 1s in the bitstring (is it even or odd?)
+%% Grab the lane at the given X, Y coordinate pair.
 %% @end
 
-parity(Bits) ->
-    parity(Bits, 0).
+xyth({xy, X, Y}, Array1600) ->
+    << <<( xyzth({xyz, X, Y, Z}, Array1600) ):1>>
+    || Z <- lists:seq(0, 63)
+    >>.
 
-parity(<<0:1, Rest/bitstring>>, NOnes) -> parity(Rest, NOnes);
-parity(<<1:1, Rest/bitstring>>, NOnes) -> parity(Rest, NOnes + 1);
-parity(<<>>                  , NOnes) -> NOnes rem 2.
+
+
+-spec xyset(LaneXY, OriginalArray1600, NewLane) -> NewArray1600
+    when OriginalArray :: <<_:1600>>,
+         LaneXY        :: {xy, 0..4, 0..4},
+         NewLane       :: <<_:64>>,
+         NewArray      :: <<_:1600>>.
+%% @private
+%% Take the original array, and swap out the lane at the given x,y coordinate
+%% with the new given lane.
+%%
+%% The lane will be represented continuously so we can do a hack
+%% @end
+
+% special case when it's the last lane
+% grab the final 64 bits off the original array and replace them with the new lane
+xyset(_LaneXY = {xy, 4, 4}, <<Pre:(1600 - 64), _:64>>, NewLane) ->
+    <<Pre:(1600 - 64), NewLane/bitstring>>;
+% general case, grab the shit before the lane, grab the shit after the lane
+% replace the shit in the middle
+xyset(_LaneXY = {xy, LaneX, LaneY}, OriginalArray, NewLane) ->
+    FirstBitOfLane_Idx0    = xyz_to_idx0({xyz, LaneX, LaneY, 0}),
+    FirstBitAfterLane_Idx0 = xyz_to_idx0({xyz, LaneX, LaneY, 63}) + 1,
+    NumberOfBitsBeforeTheLane    = FirstBitOfLane_Idx0,
+    NumberOfBitsIncludingTheLane = FirstBitAfterLane_Idx0,
+    <<PreLane:NumberOfBitsBeforeTheLane   ,         _/bitstring>> = OriginalArray,
+    <<      _:NumberOfBitsIncludingTheLane, AfterLane/bitstring>> = OriginalArray,
+    Result = <<PreLane:NumberOfBitsBeforeTheLane, NewLane/bitstring, AfterLane/bitstring>>,
+    Result.
