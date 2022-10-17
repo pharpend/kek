@@ -73,7 +73,7 @@ sha3_512(Message) ->
 -spec sha3(OutputBitLength, Message) -> Digest
     when OutputBitLength :: pos_integer(),
          Message         :: bitstring(),
-         Digest          :: <<_:OutputBitLength>>.
+         Digest          :: bitstring().
 %% @doc
 %% SHA-3 with an arbitrary output bit length.
 %%
@@ -92,7 +92,7 @@ sha3(OutputBitLength, Message) ->
 -spec shake128(Message, OutputBitLength) -> Digest
     when Message         :: bitstring(),
          OutputBitLength :: pos_integer(),
-         Digest          :: <<_:OutputBitLength>>.
+         Digest          :: bitstring().
 %% @doc
 %% This is the SHAKE variable-length hash with Capacity 256 = 2*128 bits.
 %% @end
@@ -105,7 +105,7 @@ shake128(Message, OutputBitLength) ->
 -spec shake256(Message, OutputBitLength) -> Digest
     when Message         :: bitstring(),
          OutputBitLength :: pos_integer(),
-         Digest          :: <<_:OutputBitLength>>.
+         Digest          :: bitstring().
 %% @doc
 %% This is the SHAKE variable-length hash with Capacity 512 = 2*256 bits.
 %% @end
@@ -115,11 +115,11 @@ shake256(Message, OutputBitLength) ->
 
 
 
--spec shake256(ShakeNumber, Message, OutputBitLength) -> Digest
+-spec shake(ShakeNumber, Message, OutputBitLength) -> Digest
     when ShakeNumber     :: pos_integer(),
          Message         :: bitstring(),
          OutputBitLength :: pos_integer(),
-         Digest          :: <<_:OutputBitLength>>.
+         Digest          :: bitstring().
 %% @doc
 %% This is the SHAKE variable-length hash with Capacity 512 = 2*ShakeNumber bits.
 %%
@@ -129,7 +129,7 @@ shake256(Message, OutputBitLength) ->
 
 shake(ShakeNumber, Message, OutputBitLength) ->
     Capacity = 2*ShakeNumber,
-    ShakeMessage = <<Message, (2#1111):4>>,
+    ShakeMessage = <<Message/bitstring, (2#1111):4>>,
     keccak(Capacity, ShakeMessage, OutputBitLength).
 
 
@@ -155,7 +155,7 @@ shake(ShakeNumber, Message, OutputBitLength) ->
     when Capacity        :: pos_integer(),
          Message         :: bitstring(),
          OutputBitLength :: pos_integer(),
-         Digest          :: <<_:OutputBitLength>>.
+         Digest          :: bitstring().
 %% @doc
 %% Note: this is Keccak 1600, the only one used in practice
 %%
@@ -333,11 +333,12 @@ inner_keccak(Sponge) ->
 
 -spec rounds(Sponge, NumRoundsLeft) -> ResultSponge
     when Sponge        :: <<_:1600>>,
-         NumRoundsLeft :: pos_integer(),
+         NumRoundsLeft :: non_neg_integer(),
          ResultSponge  :: <<_:1600>>.
 %% @private
 %% do however many rounds
 %% @end
+
 rounds(Sponge, NumRoundsLeft) when 1 =< NumRoundsLeft ->
     NewSponge        = rnd(Sponge),
     NewNumRoundsLeft = NumRoundsLeft - 1,
@@ -485,10 +486,10 @@ rho(Array, XY = {xy, X, Y}) ->
 
 
 
--spec rhoxy(Array, LaneXY) -> NewArray
-    when Array    :: <<_:1600>>,
-         LaneXY   :: {xy, 0..4, 0..4},
-         NewArray :: <<_:1600>>.
+-spec rhoxy(Array1600, LaneXY) -> NewArray1600
+    when Array1600    :: <<_:1600>>,
+         LaneXY       :: {xy, 0..4, 0..4},
+         NewArray1600 :: <<_:1600>>.
 %% @private
 %% do the rho step to a given lane
 %% @end
@@ -504,8 +505,8 @@ rhoxy(Array, ThisXY = {xy, ThisX, ThisY}) ->
     % in other words, we take Offset number of bits off the tail of the lane
     % put them on the front
     <<Foo:(64 - ThisOffset), Bar:ThisOffset>> = ThisLane,
-    NewLane = <<Bar:ThisOffset, Foo:(64 - ThisOffset)>>,
-    NewArray = replace_lane(Array, ThisXY, NewLane),
+    NewLane  = <<Bar:ThisOffset, Foo:(64 - ThisOffset)>>,
+    NewArray = xyset(ThisXY, Array, NewLane),
     NewArray.
 
 
@@ -557,8 +558,142 @@ offset(2, 3) ->  15 rem 64.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-pi(_Sponge) ->
-    error(nyi).
+-spec pi(Array1600) -> NewArray1600
+    when Array1600    :: <<_:1600>>,
+         NewArray1600 :: <<_:1600>>.
+%% @private
+%% The effect of this step is to rearrange the lanes
+%%
+%% Result[X, Y] = Input[X + 3*Y, X]
+%%
+%% (mod 5 of course)
+%% @end
+
+pi(Array1600) ->
+    % what I'm going to make is a map #{{xy, X, Y} := Lane}
+    % then make a new lane map from the original
+    % then convert it back into 
+    OriginalLaneMap = lane_map(Array1600, #{}, {xy, 0, 0}),
+    NewLaneMap      = new_lane_map(OriginalLaneMap, #{}, {xy, 0, 0}),
+    NewArray1600    = lane_map_to_arr1600(NewLaneMap, <<0:1600>>, {xy, 0, 0}),
+    NewArray1600.
+
+
+
+-spec lane_map(Array1600, MapAcc, Coord) -> LaneMap
+    when Array1600 :: <<_:1600>>,
+         MapAcc    :: #{XY := Lane},
+         Coord     :: XY,
+         LaneMap   :: #{XY := Lane},
+         XY        :: {xy, X :: 0..4, Y :: 0..4},
+         Lane      :: <<_:64>>.
+%% @private
+%% Make a map #{XY := Lane}
+%% @end
+
+% terminal case, end of array
+lane_map(Array1600, MapAcc, ThisXY = {xy, 4, 4}) ->
+    ThisLane = xyth(ThisXY, Array1600),
+    FinalMap = MapAcc#{ThisXY => ThisLane},
+    FinalMap;
+% end of Y value, set Y to 0 and increment X
+lane_map(Array1600, MapAcc, ThisXY = {xy, X, 4}) ->
+    ThisLane  = xyth(ThisXY, Array1600),
+    NewMapAcc = MapAcc#{ThisXY => ThisLane},
+    NewXY     = {xy, X + 1, 0},
+    lane_map(Array1600, NewMapAcc, NewXY);
+% general case: increment Y value
+lane_map(Array1600, MapAcc, ThisXY = {xy, X, Y}) ->
+    ThisLane  = xyth(ThisXY, Array1600),
+    NewMapAcc = MapAcc#{ThisXY => ThisLane},
+    NewXY     = {xy, X, Y + 1},
+    lane_map(Array1600, NewMapAcc, NewXY).
+
+
+
+-spec new_lane_map(LaneMap, MapAcc, Coord) -> NewLaneMap
+    when LaneMap    :: #{XY := Lane},
+         MapAcc     :: LaneMap,
+         Coord      :: XY,
+         NewLaneMap :: LaneMap,
+         XY         :: {xy, X :: 0..4, Y :: 0..4},
+         Lane       :: <<_:64>>.
+%% @private
+%% The effect of this step is to rearrange the lanes
+%%
+%% Result[X, Y] = Input[X + 3*Y, X]
+%%
+%% (mod 5 of course)
+%% @end
+
+% terminal case, end of array
+new_lane_map(OrigLaneMap, MapAcc, ThisXY = {xy, 4, 4}) ->
+    OrigXY   = xytrans(ThisXY),
+    ThisLane = maps:get(OrigXY, OrigLaneMap),
+    FinalMap = MapAcc#{ThisXY => ThisLane},
+    FinalMap;
+% end of Y value, set Y to 0 and increment X
+new_lane_map(OrigLaneMap, MapAcc, ThisXY = {xy, X, 4}) ->
+    OrigXY    = xytrans(ThisXY),
+    ThisLane  = maps:get(OrigXY, OrigLaneMap),
+    NewMapAcc = MapAcc#{ThisXY => ThisLane},
+    NewXY     = {xy, X + 1, 0},
+    new_lane_map(OrigLaneMap, NewMapAcc, NewXY);
+% general case: increment Y value
+new_lane_map(OrigLaneMap, MapAcc, ThisXY = {xy, X, Y}) ->
+    OrigXY    = xytrans(ThisXY),
+    ThisLane  = maps:get(OrigXY, OrigLaneMap),
+    NewMapAcc = MapAcc#{ThisXY => ThisLane},
+    NewXY     = {xy, X, Y + 1},
+    new_lane_map(OrigLaneMap, NewMapAcc, NewXY).
+
+
+
+-spec xytrans(ResultXY) -> InputXY
+    when ResultXY :: XY,
+         InputXY  :: XY,
+         XY       :: {xy, X :: 0..4, Y :: 0..4}.
+%% @private
+%% Result[X, Y] = Input[X + 3*Y, X]
+%%
+%% See NIST doc, pp. 14
+
+xytrans({xy, X, Y}) ->
+    {xy, (X + 3*Y) rem 5, X}.
+
+
+
+-spec lane_map_to_arr1600(LaneMap, Array1600Acc, Coord) -> Array1600
+    when LaneMap      :: #{XY := Lane},
+         Array1600Acc :: Array1600,
+         Coord        :: XY,
+         Array1600    :: <<_:1600>>,
+         XY           :: {xy, X :: 0..4, Y :: 0..4},
+         Lane         :: <<_:64>>.
+%% @private
+%% inverse of lane_map/3
+%%
+%% it would probably faster to concatenate an accumulator, but that requires
+%% iterating in the correct order, and i'm more comfortable calling xyset/3
+%% @end
+
+% terminal case, end of array
+lane_map_to_arr1600(LaneMap, Array1600Acc, ThisXY = {xy, 4, 4}) ->
+    ThisLane          = maps:get(ThisXY, LaneMap),
+    FinalArray1600Acc = xyset(ThisXY, Array1600Acc, ThisLane),
+    FinalArray1600Acc;
+% end of Y value, set Y to 0 and increment X
+lane_map_to_arr1600(LaneMap, Array1600Acc, ThisXY = {xy, X, 4}) ->
+    ThisLane        = maps:get(ThisXY, LaneMap),
+    NewArray1600Acc = xyset(ThisXY, Array1600Acc, ThisLane),
+    NewXY           = {xy, X + 1, 0},
+    lane_map_to_arr1600(LaneMap, NewArray1600Acc, NewXY);
+% general case: increment Y value
+lane_map_to_arr1600(LaneMap, Array1600Acc, ThisXY = {xy, X, Y}) ->
+    ThisLane        = maps:get(ThisXY, LaneMap),
+    NewArray1600Acc = xyset(ThisXY, Array1600Acc, ThisLane),
+    NewXY           = {xy, X, Y + 1},
+    lane_map_to_arr1600(LaneMap, NewArray1600Acc, NewXY).
 
 
 
@@ -798,36 +933,20 @@ behind(63)                     -> 0.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec xyzth(XYZ, Array1600) -> Bit
-    when XYZ  :: {xyz, X, Y, Z},
-         Bits :: <<_:1600>>,
-         Bit  :: 0 | 1,
-         X    :: 0..4,
-         Y    :: 0..4,
-         Z    :: 0..63.
+    when XYZ       :: {xyz, X, Y, Z},
+         Array1600 :: <<_:1600>>,
+         Bit       :: 0 | 1,
+         X         :: 0..4,
+         Y         :: 0..4,
+         Z         :: 0..63.
 %% @private
 %% Fetch the bit at the given X, Y, Z coordinate triple
 %% @end
 
-xyzth(_XYZ, _Array1600) ->
-    error(nyi).
-    %Idx0 = xyz_to_idx0(XYZ),
-    %<<_Skip:Idx0.
-
-
-
--spec xyzset(XYZ, Array1600, Bit) -> NewArray1600
-    when XYZ  :: {xyz, X, Y, Z},
-         Bits :: <<_:1600>>,
-         Bit  :: 0 | 1,
-         X    :: 0..4,
-         Y    :: 0..4,
-         Z    :: 0..63.
-%% @private
-%% Set the bit at the given X, Y, Z coordinate triple to the given value
-%% @end
-
-xyzset(_XYZ, _Array1600, _NewBit) ->
-    error(nyi).
+xyzth(XYZ, Array1600) ->
+    Idx0 = xyz_to_idx0(XYZ),
+    <<_Skip:Idx0, Bit:1, _Rest/bitstring>> = Array1600,
+    Bit.
 
 
 
@@ -870,11 +989,11 @@ xyth({xy, X, Y}, Array1600) ->
 
 
 
--spec xyset(LaneXY, OriginalArray1600, NewLane) -> NewArray1600
-    when OriginalArray :: <<_:1600>>,
-         LaneXY        :: {xy, 0..4, 0..4},
-         NewLane       :: <<_:64>>,
-         NewArray      :: <<_:1600>>.
+-spec xyset(LaneXY, Array1600, NewLane) -> NewArray1600
+    when Array1600    :: <<_:1600>>,
+         LaneXY       :: {xy, 0..4, 0..4},
+         NewLane      :: <<_:64>>,
+         NewArray1600 :: <<_:1600>>.
 %% @private
 %% Take the original array, and swap out the lane at the given x,y coordinate
 %% with the new given lane.
