@@ -1,6 +1,7 @@
 %% @doc
 %% References
 %% 1. Helpful lecture: https://www.youtube.com/watch?v=JWskjzgiIa4
+%%    Notes: https://www.crypto-textbook.com/download/Understanding-Cryptography-Keccak.pdf
 %% 2. NIST standard: https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf
 %%    (btw: the double bar notation means "concatenate")
 %% 3. https://en.wikipedia.org/wiki/SHA-3
@@ -259,6 +260,7 @@ absorb(PaddedMessageBits, BitRate = _r, Capacity = _c, Sponge) when BitRate =< b
 % empty string, return the sponge
 absorb(<<>>, _r, _c, FinalSponge) ->
     FinalSponge.
+
 
 
 -spec squeeze(WetSponge, OutputBitLength, BitRate) -> ResultBits
@@ -571,8 +573,8 @@ offset(2, 3) ->  15 rem 64.
 
 pi(Array1600) ->
     % what I'm going to make is a map #{{xy, X, Y} := Lane}
-    % then make a new lane map from the original
-    % then convert it back into 
+    % then make a new map from the which applies the coordinate transformation
+    % then convert it back into an array
     OriginalLaneMap = lane_map(Array1600, #{}, {xy, 0, 0}),
     NewLaneMap      = new_lane_map(OriginalLaneMap, #{}, {xy, 0, 0}),
     NewArray1600    = lane_map_to_arr1600(NewLaneMap, <<0:1600>>, {xy, 0, 0}),
@@ -703,8 +705,51 @@ lane_map_to_arr1600(LaneMap, Array1600Acc, ThisXY = {xy, X, Y}) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-chi(_Sponge) ->
-    error(nyi).
+
+-spec chi(Array1600) -> NewArray1600
+    when Array1600    :: <<_:1600>>,
+         NewArray1600 :: <<_:1600>>.
+%% @private
+%% The chi step. The following transformation is applied to each bit
+%%
+%% NewBit = lxor(Bit,
+%%               land(lnot(BitToTheRight),
+%%                    Bit2ToTheRight))
+
+chi(Array1600) ->
+    chi(Array1600, 0).
+
+
+
+-spec chi(Array1600, Idx0) -> NewArray1600
+    when Array1600    :: <<_:1600>>,
+         Idx0         :: non_neg_integer(),
+         NewArray1600 :: <<_:1600>>.
+%% @private
+%% The chi step. The following transformation is applied to each bit
+%%
+%% NewBit = lxor(Bit,
+%%               land(lnot(BitToTheRight),
+%%                    Bit2ToTheRight))
+%%
+%% FIXME: Could be made more efficient by operating on lanes
+
+chi(Array1600, ThisIdx0) when 0 =< ThisIdx0, ThisIdx0 =< 1599 ->
+    ThisXYZ      = {xyz,             ThisX  , ThisY, ThisZ} = idx0_to_xyz(ThisIdx0),
+    RightXYZ     = {xyz,       right(ThisX) , ThisY, ThisZ},
+    Right2XYZ    = {xyz, right(right(ThisX)), ThisY, ThisZ},
+    ThisBit      = xyzth(ThisXYZ  , Array1600),
+    RightBit     = xyzth(RightXYZ , Array1600),
+    Right2Bit    = xyzth(Right2XYZ, Array1600),
+    NewBit       = lxor(ThisBit,
+                        land(lnot(RightBit),
+                             Right2Bit)),
+    NewArray1600 = xyzset(ThisXYZ, Array1600, NewBit),
+    NewIdx0      = ThisIdx0 + 1,
+    chi(NewArray1600, NewIdx0);
+% terminal case
+chi(Array1600, 1600) ->
+    Array1600.
 
 
 
@@ -947,6 +992,25 @@ xyzth(XYZ, Array1600) ->
     Idx0 = xyz_to_idx0(XYZ),
     <<_Skip:Idx0, Bit:1, _Rest/bitstring>> = Array1600,
     Bit.
+
+
+
+-spec xyzset(XYZ, Array1600, NewBit) -> NewArray1600
+    when XYZ          :: {xyz, X, Y, Z},
+         Array1600    :: <<_:1600>>,
+         NewBit       :: 0 | 1,
+         NewArray1600 :: Array1600,
+         X            :: 0..4,
+         Y            :: 0..4,
+         Z            :: 0..63.
+%% @private
+%% Replace the bit at {X, Y, Z} with the new bit
+%% @end
+
+xyzset(XYZ, Array1600, NewBit) ->
+    Idx0 = xyz_to_idx0(XYZ),
+    <<Pre:Idx0, _Bit:1, Post/bitstring>> = Array1600,
+    <<Pre:Idx0, NewBit:1, Post/bitstring>>.
 
 
 
