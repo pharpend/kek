@@ -176,3 +176,23 @@ print64_(<<N:64>>) ->
 
 iolist_to_list(IoList) ->
     binary_to_list(iolist_to_binary(IoList)).
+
+
+%% print out big_rc(N) -> RC(N)
+print_big_rcs() ->
+    pbr(0).
+
+% 1 digit numbers
+pbr(N) when 0 =< N, N =< 9 ->
+    <<ThisRC_int:64>> = big_rc(N),
+    io:format("round_constant_int( ~p) -> ~p;~n", [N, ThisRC_int]),
+    pbr(N + 1);
+% 2 digit numbers
+pbr(N) when 10 =< N, N =< 22 ->
+    <<ThisRC_int:64>> = big_rc(N),
+    io:format("round_constant_int(~p) -> ~p;~n", [N, ThisRC_int]),
+    pbr(N + 1);
+% terminal case
+pbr(N) when N =:= 23 ->
+    <<ThisRC_int:64>> = big_rc(N),
+    io:format("round_constant_int(~p) -> ~p.~n", [N, ThisRC_int]).

@@ -342,7 +342,12 @@ inner_keccak(Sponge) ->
 %% @end
 
 rounds(Sponge, NumRoundsLeft) when 1 =< NumRoundsLeft ->
-    NewSponge        = rnd(Sponge),
+    % NRoundsLeft = 24
+    % idx0 = 0
+    % NRoundsLeft = 1
+    % idx0 = 23
+    RoundIdx0        = 24 - NumRoundsLeft,
+    NewSponge        = rnd(RoundIdx0, Sponge),
     NewNumRoundsLeft = NumRoundsLeft - 1,
     rounds(NewSponge, NewNumRoundsLeft);
 % no rounds left
@@ -351,15 +356,16 @@ rounds(FinalSponge, 0) ->
 
 
 
--spec rnd(Sponge) -> NewSponge
-    when Sponge    :: <<_:1600>>,
+-spec rnd(RoundIdx0, Sponge) -> NewSponge
+    when RoundIdx0 :: 0..23,
+         Sponge    :: <<_:1600>>,
          NewSponge :: <<_:1600>>.
 %% @private
 %% do a single round
 %% @private
 
-rnd(Sponge) ->
-    iota(chi(pi(rho(theta(Sponge))))).
+rnd(RoundIdx0, Sponge) ->
+    iota(RoundIdx0, chi(pi(rho(theta(Sponge))))).
 
 
 
@@ -752,6 +758,18 @@ chi(Array1600, 1600) ->
     Array1600.
 
 
+lxor(0, 0) -> 0;
+lxor(0, 1) -> 1;
+lxor(1, 0) -> 1;
+lxor(1, 1) -> 0.
+
+land(0, 0) -> 0;
+land(0, 1) -> 0;
+land(1, 0) -> 0;
+land(1, 1) -> 1.
+
+lnot(0) -> 1;
+lnot(1) -> 0.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -759,9 +777,72 @@ chi(Array1600, 1600) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-iota(_Sponge) ->
-    error(nyi).
+-spec iota(RoundIdx0, Array1600) -> NewArray1600
+    when RoundIdx0    :: 0..23,
+         Array1600    :: <<_:1600>>,
+         NewArray1600 :: <<_:1600>>.
+%% @private
+%% iota xors the 0,0 lane by a round constant which depends on the round
 
+iota(RoundIdx0, Array1600) ->
+    <<Lane00_int:64>>     = xyth({xy, 0, 0}, Array1600),
+    ThisRoundConstant_int = round_constant_int(RoundIdx0),
+    NewLane00_bytes       = <<(Lane00_int bxor ThisRoundConstant_int):64>>,
+    xyset({xy, 0, 0}, Array1600, NewLane00_bytes).
+
+%% the algorithm is incorrect in both of these cases
+
+%% textbook answer
+round_constant_int( 0) -> 16#0000000000000001;
+round_constant_int( 1) -> 16#0000000000008082;
+round_constant_int( 2) -> 16#800000000000808A;
+round_constant_int( 3) -> 16#8000000080008000;
+round_constant_int( 4) -> 16#000000000000808B;
+round_constant_int( 5) -> 16#0000000080000001;
+round_constant_int( 6) -> 16#8000000080008081;
+round_constant_int( 7) -> 16#8000000000008009;
+round_constant_int( 8) -> 16#000000000000008A;
+round_constant_int( 9) -> 16#0000000000000088;
+round_constant_int(10) -> 16#0000000080008009;
+round_constant_int(11) -> 16#000000008000000A;
+round_constant_int(12) -> 16#000000008000808B;
+round_constant_int(13) -> 16#800000000000008B;
+round_constant_int(14) -> 16#8000000000008089;
+round_constant_int(15) -> 16#8000000000008003;
+round_constant_int(16) -> 16#8000000000008002;
+round_constant_int(17) -> 16#8000000000000080;
+round_constant_int(18) -> 16#000000000000800A;
+round_constant_int(19) -> 16#800000008000000A;
+round_constant_int(20) -> 16#8000000080008081;
+round_constant_int(21) -> 16#8000000000008080;
+round_constant_int(22) -> 16#0000000080000001;
+round_constant_int(23) -> 16#8000000080008008.
+
+%% my answer
+%% round_constant_int( 0) -> 9223372036854775808;
+%% round_constant_int( 1) -> 4684025087442026496;
+%% round_constant_int( 2) -> 5836946592048873473;
+%% round_constant_int( 3) -> 281479271677953;
+%% round_constant_int( 4) -> 15060318628903649280;
+%% round_constant_int( 5) -> 9223372041149743104;
+%% round_constant_int( 6) -> 9295711110164381697;
+%% round_constant_int( 7) -> 10376575016438333441;
+%% round_constant_int( 8) -> 5836665117072162816;
+%% round_constant_int( 9) -> 1224979098644774912;
+%% round_constant_int(10) -> 10376575020733300736;
+%% round_constant_int(11) -> 5764607527329202176;
+%% round_constant_int(12) -> 15060318633198616576;
+%% round_constant_int(13) -> 15060037153926938625;
+%% round_constant_int(14) -> 10448632610476261377;
+%% round_constant_int(15) -> 13835339530258874369;
+%% round_constant_int(16) -> 4611967493404098561;
+%% round_constant_int(17) -> 72057594037927937;
+%% round_constant_int(18) -> 5764888998010945536;
+%% round_constant_int(19) -> 5764607527329202177;
+%% round_constant_int(20) -> 9295711110164381697;
+%% round_constant_int(21) -> 72339069014638593;
+%% round_constant_int(22) -> 9223372041149743104;
+%% round_constant_int(23) -> 1153202983878524929.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
