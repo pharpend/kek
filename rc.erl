@@ -4,17 +4,19 @@
 %% is correct
 -module(rc).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -spec little_rc(T) -> Bit
     when T   :: non_neg_integer(),
          Bit :: 0 | 1.
 %% copying from pp. 16 of https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf
+%%
+%% n.b. the || operator there i think means concatenate
 
 little_rc(T) when (T rem 255) =:= 0 ->
     1;
 little_rc(T) ->
-    R       = <<(2#1000):4, (2#0000):4>>,     %% could make this 8 but splitting into 4 is clearer
+    R       = <<2#1000_0000>>,
     InitI   = 1,
     TMod255 = T rem 255,
     NewR = little_rc(InitI, TMod255, R),
@@ -142,9 +144,35 @@ xrc(22) -> <<( 16#0000000080000001 ):64>>;
 xrc(23) -> <<( 16#8000000080008008 ):64>>.
 
 
+%% all false
 check() ->
     CheckI =
         fun(I) ->
             io:format("I = ~p: ~p~n", [I, big_rc(I) =:= xrc(I)])
         end,
     lists:foreach(CheckI, lists:seq(0, 23)).
+
+%% checks if the expectation equals the outcome in the reversed case
+%% all true
+check_rev() ->
+    CheckI =
+        fun(I) ->
+            BigResult = str64(big_rc(I)),
+            ExpResult = lists:reverse(str64(xrc(I))),
+            io:format("I = ~p: ~p~n", [I, BigResult =:= ExpResult])
+        end,
+    lists:foreach(CheckI, lists:seq(0, 23)).
+
+
+
+%% format a 64 bit binary as a string (no newline)
+str64(<<N:64>>) ->
+    %% prints with 0 as the padding character
+    iolist_to_list(io_lib:format("~64.2.0B", [N])).
+
+%% prints with _ as the padding character, newline
+print64_(<<N:64>>) ->
+    io:format("~64.2._B~n", [N]).
+
+iolist_to_list(IoList) ->
+    binary_to_list(iolist_to_binary(IoList)).
