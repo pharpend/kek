@@ -341,7 +341,10 @@ inner_keccak(Sponge) ->
 %% do however many rounds
 %% @end
 
-rounds(Sponge, NumRoundsLeft) when 1 =< NumRoundsLeft ->
+% no rounds left
+rounds(FinalSponge, 0) ->
+    FinalSponge;
+rounds(Sponge, NumRoundsLeft) ->
     % NRoundsLeft = 24
     % idx0 = 0
     % NRoundsLeft = 1
@@ -349,10 +352,7 @@ rounds(Sponge, NumRoundsLeft) when 1 =< NumRoundsLeft ->
     RoundIdx0        = 24 - NumRoundsLeft,
     NewSponge        = rnd(RoundIdx0, Sponge),
     NewNumRoundsLeft = NumRoundsLeft - 1,
-    rounds(NewSponge, NewNumRoundsLeft);
-% no rounds left
-rounds(FinalSponge, 0) ->
-    FinalSponge.
+    rounds(NewSponge, NewNumRoundsLeft).
 
 
 
@@ -393,12 +393,12 @@ rnd(RoundIdx0, Sponge) ->
 %% @end
 
 theta(Array) ->
-    theta(Array, 0).
+    theta(Array, Array, 0).
 
 
-
--spec theta(Array, Idx0) -> NewArray
+-spec theta(Array, OldArray, Idx0) -> NewArray
     when Array    :: <<_:1600>>,
+         OldArray :: <<_:1600>>,
          Idx0     :: 0..1599,
          NewArray :: <<_:1600>>.
 %% @private
@@ -407,7 +407,7 @@ theta(Array) ->
 %% @end
 
 % done
-theta(ResultArray, 1600) ->
+theta(ResultArray, _, 1600) ->
     ResultArray;
 % do the weird permutation
 % x = left/right             -/+
@@ -415,19 +415,18 @@ theta(ResultArray, 1600) ->
 % z = outOfScreen/intoScreen -/+
 %     front/behind           -/+
 % left-handed coordinate system but what can you do
-theta(ArrayBits, ThisIdx0) ->
+theta(ArrayBits, OrigArray, ThisIdx0) ->
     <<Before:ThisIdx0, ThisBit:1, Rest/bitstring>> = ArrayBits,
     {xyz, ThisX, _ThisY, ThisZ} = idx0_to_xyz(ThisIdx0),
     XToTheLeft                  = left(ThisX),
     XToTheRight                 = right(ThisX),
     ZToTheFront                 = front(ThisZ),
-    ColumnToTheLeft             = xzth({xz, XToTheLeft, ThisZ}, ArrayBits),
-    ColumnToTheFrontRight       = xzth({xz, XToTheRight, ZToTheFront}, ArrayBits),
+    ColumnToTheLeft             = xzth({xz, XToTheLeft, ThisZ}, OrigArray),
+    ColumnToTheFrontRight       = xzth({xz, XToTheRight, ZToTheFront}, OrigArray),
     NewBit                      = parity(<<ColumnToTheLeft/bitstring, ColumnToTheFrontRight/bitstring, ThisBit:1>>),
     NewBits                     = <<Before:ThisIdx0, NewBit:1, Rest/bitstring>>,
     NewIdx0                     = ThisIdx0 + 1,
-    theta(NewBits, NewIdx0).
-
+    theta(NewBits, OrigArray, NewIdx0).
 
 
 -spec parity(Bits) -> Parity
@@ -723,12 +722,12 @@ lane_map_to_arr1600(LaneMap, Array1600Acc, ThisXY = {xy, X, Y}) ->
 %%                    Bit2ToTheRight))
 
 chi(Array1600) ->
-    chi(Array1600, 0).
+    chi(Array1600, Array1600, 0).
 
 
-
--spec chi(Array1600, Idx0) -> NewArray1600
+-spec chi(Array1600, OldArray1600, Idx0) -> NewArray1600
     when Array1600    :: <<_:1600>>,
+         OldArray1600 :: <<_:1600>>,
          Idx0         :: non_neg_integer(),
          NewArray1600 :: <<_:1600>>.
 %% @private
@@ -740,21 +739,21 @@ chi(Array1600) ->
 %%
 %% FIXME: Could be made more efficient by operating on lanes
 
-chi(Array1600, ThisIdx0) when 0 =< ThisIdx0, ThisIdx0 =< 1599 ->
+chi(Array1600, OrigArray, ThisIdx0) when 0 =< ThisIdx0, ThisIdx0 =< 1599 ->
     ThisXYZ      = {xyz,             ThisX  , ThisY, ThisZ} = idx0_to_xyz(ThisIdx0),
     RightXYZ     = {xyz,       right(ThisX) , ThisY, ThisZ},
     Right2XYZ    = {xyz, right(right(ThisX)), ThisY, ThisZ},
     ThisBit      = xyzth(ThisXYZ  , Array1600),
-    RightBit     = xyzth(RightXYZ , Array1600),
-    Right2Bit    = xyzth(Right2XYZ, Array1600),
+    RightBit     = xyzth(RightXYZ , OrigArray),
+    Right2Bit    = xyzth(Right2XYZ, OrigArray),
     NewBit       = lxor(ThisBit,
                         land(lnot(RightBit),
                              Right2Bit)),
     NewArray1600 = xyzset(ThisXYZ, Array1600, NewBit),
     NewIdx0      = ThisIdx0 + 1,
-    chi(NewArray1600, NewIdx0);
+    chi(NewArray1600, OrigArray, NewIdx0);
 % terminal case
-chi(Array1600, 1600) ->
+chi(Array1600, _, 1600) ->
     Array1600.
 
 
@@ -791,58 +790,61 @@ iota(RoundIdx0, Array1600) ->
     xyset({xy, 0, 0}, Array1600, NewLane00_bytes).
 
 %% the algorithm is incorrect in both of these cases
+%% Well... They have a weird way of defining their "bitstrings" it is least significant bit and byte first...
+%% So just flipping them would be nice.
 
 %% textbook answer
-round_constant_int( 0) -> 16#0000000000000001;
-round_constant_int( 1) -> 16#0000000000008082;
-round_constant_int( 2) -> 16#800000000000808A;
-round_constant_int( 3) -> 16#8000000080008000;
-round_constant_int( 4) -> 16#000000000000808B;
-round_constant_int( 5) -> 16#0000000080000001;
-round_constant_int( 6) -> 16#8000000080008081;
-round_constant_int( 7) -> 16#8000000000008009;
-round_constant_int( 8) -> 16#000000000000008A;
-round_constant_int( 9) -> 16#0000000000000088;
-round_constant_int(10) -> 16#0000000080008009;
-round_constant_int(11) -> 16#000000008000000A;
-round_constant_int(12) -> 16#000000008000808B;
-round_constant_int(13) -> 16#800000000000008B;
-round_constant_int(14) -> 16#8000000000008089;
-round_constant_int(15) -> 16#8000000000008003;
-round_constant_int(16) -> 16#8000000000008002;
-round_constant_int(17) -> 16#8000000000000080;
-round_constant_int(18) -> 16#000000000000800A;
-round_constant_int(19) -> 16#800000008000000A;
-round_constant_int(20) -> 16#8000000080008081;
-round_constant_int(21) -> 16#8000000000008080;
-round_constant_int(22) -> 16#0000000080000001;
-round_constant_int(23) -> 16#8000000080008008.
+%% round_constant_int( 0) -> 16#0000000000000001;
+%% round_constant_int( 1) -> 16#0000000000008082;
+%% round_constant_int( 2) -> 16#800000000000808A;
+%% round_constant_int( 3) -> 16#8000000080008000;
+%% round_constant_int( 4) -> 16#000000000000808B;
+%% round_constant_int( 5) -> 16#0000000080000001;
+%% round_constant_int( 6) -> 16#8000000080008081;
+%% round_constant_int( 7) -> 16#8000000000008009;
+%% round_constant_int( 8) -> 16#000000000000008A;
+%% round_constant_int( 9) -> 16#0000000000000088;
+%% round_constant_int(10) -> 16#0000000080008009;
+%% round_constant_int(11) -> 16#000000008000000A;
+%% round_constant_int(12) -> 16#000000008000808B;
+%% round_constant_int(13) -> 16#800000000000008B;
+%% round_constant_int(14) -> 16#8000000000008089;
+%% round_constant_int(15) -> 16#8000000000008003;
+%% round_constant_int(16) -> 16#8000000000008002;
+%% round_constant_int(17) -> 16#8000000000000080;
+%% round_constant_int(18) -> 16#000000000000800A;
+%% round_constant_int(19) -> 16#800000008000000A;
+%% round_constant_int(20) -> 16#8000000080008081;
+%% round_constant_int(21) -> 16#8000000000008080;
+%% round_constant_int(22) -> 16#0000000080000001;
+%% round_constant_int(23) -> 16#8000000080008008.
 
 %% my answer
-%% round_constant_int( 0) -> 9223372036854775808;
-%% round_constant_int( 1) -> 4684025087442026496;
-%% round_constant_int( 2) -> 5836946592048873473;
-%% round_constant_int( 3) -> 281479271677953;
-%% round_constant_int( 4) -> 15060318628903649280;
-%% round_constant_int( 5) -> 9223372041149743104;
-%% round_constant_int( 6) -> 9295711110164381697;
-%% round_constant_int( 7) -> 10376575016438333441;
-%% round_constant_int( 8) -> 5836665117072162816;
-%% round_constant_int( 9) -> 1224979098644774912;
-%% round_constant_int(10) -> 10376575020733300736;
-%% round_constant_int(11) -> 5764607527329202176;
-%% round_constant_int(12) -> 15060318633198616576;
-%% round_constant_int(13) -> 15060037153926938625;
-%% round_constant_int(14) -> 10448632610476261377;
-%% round_constant_int(15) -> 13835339530258874369;
-%% round_constant_int(16) -> 4611967493404098561;
-%% round_constant_int(17) -> 72057594037927937;
-%% round_constant_int(18) -> 5764888998010945536;
-%% round_constant_int(19) -> 5764607527329202177;
-%% round_constant_int(20) -> 9295711110164381697;
-%% round_constant_int(21) -> 72339069014638593;
-%% round_constant_int(22) -> 9223372041149743104;
-%% round_constant_int(23) -> 1153202983878524929.
+%% TODO: In hex?
+round_constant_int( 0) -> 9223372036854775808; %% 16#8000000000000000 !!
+round_constant_int( 1) -> 4684025087442026496;
+round_constant_int( 2) -> 5836946592048873473;
+round_constant_int( 3) -> 281479271677953;
+round_constant_int( 4) -> 15060318628903649280;
+round_constant_int( 5) -> 9223372041149743104;
+round_constant_int( 6) -> 9295711110164381697;
+round_constant_int( 7) -> 10376575016438333441;
+round_constant_int( 8) -> 5836665117072162816;
+round_constant_int( 9) -> 1224979098644774912;
+round_constant_int(10) -> 10376575020733300736;
+round_constant_int(11) -> 5764607527329202176;
+round_constant_int(12) -> 15060318633198616576;
+round_constant_int(13) -> 15060037153926938625;
+round_constant_int(14) -> 10448632610476261377;
+round_constant_int(15) -> 13835339530258874369;
+round_constant_int(16) -> 4611967493404098561;
+round_constant_int(17) -> 72057594037927937;
+round_constant_int(18) -> 5764888998010945536;
+round_constant_int(19) -> 5764607527329202177;
+round_constant_int(20) -> 9295711110164381697;
+round_constant_int(21) -> 72339069014638593;
+round_constant_int(22) -> 9223372041149743104;
+round_constant_int(23) -> 1153202983878524929.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -867,7 +869,7 @@ round_constant_int(23) -> 16#8000000080008008.
 %%% 0D subsets of the state:
 %%% - A [bit] is a single bit in the array given by an X,Y,Z coordinate triple
 %%%   (see xyzth/3).
-%%% 
+%%%
 %%% 1D subsets of the state:
 %%% - a [row]
 %%%   - is a 5-bit array
@@ -1161,3 +1163,15 @@ xyset(_LaneXY = {xy, LaneX, LaneY}, OriginalArray, NewLane) ->
     <<      _:NumberOfBitsIncludingTheLane, AfterLane/bitstring>> = OriginalArray,
     Result = <<PreLane:NumberOfBitsBeforeTheLane, NewLane/bitstring, AfterLane/bitstring>>,
     Result.
+
+%% Translating from Bitstring to hex table least significant bit first!!
+tabular(Bin) -> tabular(0, Bin).
+
+tabular(N, Bytes) when byte_size(Bytes) =< 16->
+    io:format("~3.10.0B: ~s\n", [N, string:join([begin <<X:8>> = <<H:1, G:1, F:1, E:1, D:1, C:1, B:1, A:1>>, io_lib:format("~2.16.0B", [X]) end
+                                                 || <<A:1, B:1, C:1, D:1, E:1, F:1, G:1, H:1>> <= Bytes], " ")]);
+tabular(N, <<Bytes:16/binary, Rest/binary>>) ->
+    tabular(N, Bytes), tabular(N + 16, Rest).
+
+h2b(Bytes) ->
+  << <<H:1, G:1, F:1, E:1, D:1, C:1, B:1, A:1>> || <<A:1, B:1, C:1, D:1, E:1, F:1, G:1, H:1>> <= Bytes >>.
